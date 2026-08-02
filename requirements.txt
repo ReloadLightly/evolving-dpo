@@ -1,0 +1,13 @@
+# Core (Phases 0-2). Torch: on Colab it's preinstalled; locally for CPU-only
+# use:  pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+transformers>=4.44
+datasets>=2.20
+peft>=0.11
+accelerate>=0.30
+
+# Dev
+pytest>=8.0
+
+# Phase 3 (evolution) - install when we arm shinka_task/:
+# shinka-evolve
