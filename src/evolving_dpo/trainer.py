@@ -1,23 +1,26 @@
 """A minimal, readable DPO-family trainer.
 
-Deliberately ~150 lines instead of a framework: every moving part of
+Deliberately ~200 lines instead of a framework: every moving part of
 preference optimization is visible on one screen each. The reference model
 costs no extra memory — the policy is (base model + LoRA adapters), so
 running the same model with adapters disabled IS the frozen reference.
 
     policy  = model with LoRA enabled   (trainable)
     ref     = model with LoRA disabled  (frozen, exact same base weights)
+
+For reference-free objectives (SimPO, ORPO...) the reference passes are
+skipped entirely: 4 forward passes per step become 2.
 """
 
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass, field
 
 import torch
 
 from .data import collate, encode_pair
+from .losses import needs_reference
 
 
 def sequence_logps(model, input_ids, attention_mask, labels):
@@ -69,11 +72,24 @@ def train_dpo(model, tokenizer, pairs, loss_fn, cfg: TrainConfig, device=None):
     """Train the policy (LoRA adapters) with `loss_fn`; return diagnostics.
 
     `model` must be a PEFT model. Returns a dict with loss/margin/accuracy
-    histories and a `diverged` flag (NaN/Inf guard) — candidates that blow
-    up get fitness 0 instead of crashing the evolution run.
+    histories, likelihood-displacement diagnostics, and a `diverged` flag
+    (NaN/Inf guard) — candidates that blow up get fitness 0 instead of
+    crashing the evolution run.
+
+    Diagnostics worth understanding:
+      margin        the implicit reward margin (reference-based) or the
+                    length-normalized score gap (reference-free).
+      chosen_shift  mean (policy - reference) log-probability of the CHOSEN
+                    response, per token. If this goes NEGATIVE the model is
+                    getting *less* likely to say the preferred answer even
+                    as the margin improves — likelihood displacement
+                    (Razin et al., ICLR 2025), the failure that turned a
+                    refusal-trained Llama-3-8B's refusal rate from 74% to 33%.
+                    Only tracked when the loss uses a reference.
     """
     device = device or next(model.parameters()).device
     rng = random.Random(cfg.seed)
+    use_ref = needs_reference(loss_fn)
     encoded = [
         encode_pair(tokenizer, ex, cfg.max_prompt_tokens, cfg.max_completion_tokens)
         for ex in pairs
@@ -87,7 +103,7 @@ def train_dpo(model, tokenizer, pairs, loss_fn, cfg: TrainConfig, device=None):
 
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
 
-    history = {"loss": [], "margin": [], "accuracy": []}
+    history = {"loss": [], "margin": [], "accuracy": [], "chosen_shift": []}
     order, cursor = list(range(len(encoded))), 0
     rng.shuffle(order)
 
@@ -102,23 +118,31 @@ def train_dpo(model, tokenizer, pairs, loss_fn, cfg: TrainConfig, device=None):
         cursor += cfg.batch_size
         batch = collate(tokenizer, [encoded[i] for i in idx], device)
 
-        # ---- reference log-probs: same model, adapters off, no grad ------
-        with torch.no_grad(), model.disable_adapter():
-            ref_chosen, _ = batch_logps(model, batch, "chosen")
-            ref_rejected, _ = batch_logps(model, batch, "rejected")
-
         # ---- policy log-probs: adapters on, gradients flowing ------------
-        pol_chosen, _ = batch_logps(model, batch, "chosen")
-        pol_rejected, _ = batch_logps(model, batch, "rejected")
+        pol_chosen, len_chosen = batch_logps(model, batch, "chosen")
+        pol_rejected, len_rejected = batch_logps(model, batch, "rejected")
+
+        # ---- reference log-probs: same model, adapters off, no grad ------
+        # Skipped entirely for reference-free losses — this is the 2x saving.
+        if use_ref:
+            with torch.no_grad(), model.disable_adapter():
+                ref_chosen, _ = batch_logps(model, batch, "chosen")
+                ref_rejected, _ = batch_logps(model, batch, "rejected")
+        else:
+            ref_chosen = torch.zeros_like(pol_chosen)
+            ref_rejected = torch.zeros_like(pol_rejected)
 
         losses = loss_fn(
             pol_chosen, pol_rejected, ref_chosen, ref_rejected,
-            beta=cfg.beta, **cfg.extra_loss_kwargs,
+            beta=cfg.beta,
+            chosen_lengths=len_chosen, rejected_lengths=len_rejected,
+            **cfg.extra_loss_kwargs,
         )
         loss = losses.mean()
 
         if not torch.isfinite(loss):
-            return {**history, "diverged": True, "steps_done": step}
+            return {**history, "diverged": True, "steps_done": step,
+                    "used_reference": use_ref}
 
         (loss / cfg.grad_accum).backward()
         if (step + 1) % cfg.grad_accum == 0:
@@ -127,22 +151,33 @@ def train_dpo(model, tokenizer, pairs, loss_fn, cfg: TrainConfig, device=None):
             sched.step()
             opt.zero_grad(set_to_none=True)
 
-        # ---- diagnostics: the implicit reward margin, per pair -----------
+        # ---- diagnostics -------------------------------------------------
         with torch.no_grad():
-            margin = cfg.beta * (
-                (pol_chosen - pol_rejected) - (ref_chosen - ref_rejected)
-            )
+            if use_ref:
+                margin = cfg.beta * (
+                    (pol_chosen - pol_rejected) - (ref_chosen - ref_rejected)
+                )
+                shift = ((pol_chosen - ref_chosen) / len_chosen).mean()
+                history["chosen_shift"].append(float(shift))
+            else:
+                margin = cfg.beta * (
+                    pol_chosen / len_chosen - pol_rejected / len_rejected
+                )
             history["loss"].append(float(loss))
             history["margin"].append(float(margin.mean()))
             history["accuracy"].append(float((margin > 0).float().mean()))
 
         if cfg.log_every and (step + 1) % cfg.log_every == 0:
             k = cfg.log_every
-            print(
+            msg = (
                 f"step {step + 1:>4}/{cfg.steps}  "
                 f"loss {sum(history['loss'][-k:]) / k:.4f}  "
                 f"margin {sum(history['margin'][-k:]) / k:+.3f}  "
                 f"acc {sum(history['accuracy'][-k:]) / k:.3f}"
             )
+            if use_ref:
+                msg += f"  chosen_shift {sum(history['chosen_shift'][-k:]) / k:+.4f}"
+            print(msg)
 
-    return {**history, "diverged": False, "steps_done": cfg.steps}
+    return {**history, "diverged": False, "steps_done": cfg.steps,
+            "used_reference": use_ref}

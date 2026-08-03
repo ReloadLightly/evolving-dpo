@@ -6,11 +6,21 @@ import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 import torch  # noqa: E402
-from evolving_dpo.losses import dpo_loss, ipo_loss, slic_loss, dpop_loss, LOSS_REGISTRY  # noqa: E402
+from evolving_dpo.losses import (  # noqa: E402
+    dpo_loss, ipo_loss, slic_loss, dpop_loss, simpo_loss,
+    LOSS_REGISTRY, needs_reference,
+)
 
 
 def _tensors(pc, pr, rc, rr):
     return tuple(torch.tensor([v], dtype=torch.float32) for v in (pc, pr, rc, rr))
+
+
+def _lengths(nc, nr):
+    return {
+        "chosen_lengths": torch.tensor([nc], dtype=torch.float32),
+        "rejected_lengths": torch.tensor([nr], dtype=torch.float32),
+    }
 
 
 def test_dpo_at_zero_margin_is_ln2():
@@ -49,9 +59,43 @@ def test_dpop_penalizes_chosen_likelihood_drop():
     assert float(bad) > float(ok)                        # ...DPOP can.
 
 
+def test_simpo_is_reference_free():
+    """Reference args must not change SimPO's output at all."""
+    kw = _lengths(10.0, 10.0)
+    a = simpo_loss(*_tensors(-10.0, -20.0, -3.0, -3.0), beta=2.0, gamma=1.0, **kw)
+    b = simpo_loss(*_tensors(-10.0, -20.0, -99.0, 0.0), beta=2.0, gamma=1.0, **kw)
+    assert torch.allclose(a, b)
+    assert needs_reference(simpo_loss) is False
+    assert needs_reference(dpo_loss) is True  # the safe default
+
+
+def test_simpo_normalizes_by_length():
+    """Equal per-token quality => equal treatment, regardless of length.
+
+    Chosen: -10 over 10 tokens = -1.0/token. Rejected: -40 over 40 tokens =
+    -1.0/token. DPO's raw sums would call the short answer far better; SimPO
+    sees a tie, so delta = -gamma and the loss is -logsigmoid(-1).
+    """
+    out = simpo_loss(
+        *_tensors(-10.0, -40.0, 0.0, 0.0), beta=2.0, gamma=1.0, **_lengths(10.0, 40.0)
+    )
+    expected = -torch.nn.functional.logsigmoid(torch.tensor(-1.0))
+    assert torch.allclose(out, expected.reshape(1), atol=1e-6)
+
+
+def test_simpo_requires_lengths():
+    try:
+        simpo_loss(*_tensors(-1.0, -2.0, 0.0, 0.0), beta=2.0)
+    except ValueError as e:
+        assert "lengths" in str(e)
+    else:
+        raise AssertionError("simpo_loss should refuse to run without lengths")
+
+
 def test_registry_signatures():
+    """Every registered loss accepts the trainer's full call signature."""
     args = _tensors(-4.0, -9.0, -5.0, -5.0)
     for name, fn in LOSS_REGISTRY.items():
-        out = fn(*args, beta=0.1)
+        out = fn(*args, beta=0.1, **_lengths(8.0, 8.0))
         assert out.shape == (1,), name
         assert torch.isfinite(out).all(), name

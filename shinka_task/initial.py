@@ -17,12 +17,24 @@ def preference_loss(
     ref_chosen_logps,
     ref_rejected_logps,
     beta: float = 0.1,
+    chosen_lengths=None,
+    rejected_lengths=None,
+    **kwargs,
 ):
     """Candidate preference-optimization objective.
 
     Inputs are 1-D tensors (one entry per preference pair) of summed
-    completion log-probabilities. Must return a 1-D tensor of per-example
-    losses (lower = better). Keep it differentiable.
+    completion log-probabilities. `chosen_lengths` / `rejected_lengths` give
+    the completion token counts, so length-normalized objectives (SimPO-style
+    average log-probability) are reachable by the search. Must return a 1-D
+    tensor of per-example losses (lower = better). Keep it differentiable.
+
+    Design freedoms available to a mutation:
+      * use or ignore the reference log-probabilities;
+      * normalize by length, or not;
+      * bound the objective (IPO/SLiC) instead of leaving it monotone;
+      * add a term protecting the chosen response's absolute likelihood
+        (DPOP) against likelihood displacement.
     """
     pi_logratios = policy_chosen_logps - policy_rejected_logps
     ref_logratios = ref_chosen_logps - ref_rejected_logps
