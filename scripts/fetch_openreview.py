@@ -294,13 +294,16 @@ def classify_acceptance(decision: str | None, venue: str | None) -> bool | None:
     for text in (decision, venue):
         if not text:
             continue
-        low = text.lower()
+        # Normalize separators: the outcome vocabulary is written both as
+        # "Top-25%" and "notable top 25%" depending on year and source.
+        low = re.sub(r"[-_/]+", " ", text.lower())
         if "withdraw" in low or "desk" in low:
             return None
         if "reject" in low or low.startswith("submitted to"):
             return False
         if "accept" in low or any(
-            k in low for k in ("poster", "spotlight", "oral", "notable", "top 5%", "top 25%")
+            k in low for k in ("poster", "spotlight", "oral", "talk", "notable",
+                               "top 5%", "top 25%")
         ):
             return True
     return None
