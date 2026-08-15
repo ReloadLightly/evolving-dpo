@@ -83,6 +83,33 @@ Each loss runs at its own published hyperparameters (`LOSS_DEFAULTS` in
 `losses.py`) unless overridden — SimPO's β multiplies a per-token average
 rather than a sum, so sharing DPO's β = 0.1 would be a rigged comparison.
 
+## Second study: institutional preference pairs from peer review
+
+This branch hosts a second study that reuses the trainer rather than the
+evolution loop. When two reviewers of the same ICLR paper disagree, the
+institution eventually sides with one of them; that makes a preference pair
+whose arbiter is the venue's own decision. The question is whether a model
+tuned on those pairs learns what a research community counts as a good
+argument, or only how its reviewers write.
+
+The plan, hypotheses, kill criteria and task list live in
+[HANDOFF.md](HANDOFF.md); the timestamped hypotheses are in
+[preregistration-v0.1.md](preregistration-v0.1.md). Data layout and the
+no-bulk-redistribution commitment are in [data/README.md](data/README.md).
+
+```bash
+pip install openreview-py
+python scripts/fetch_openreview.py --check                    # API reachable?
+python scripts/fetch_openreview.py --years 2023 --limit 25    # smoke test
+python scripts/fetch_openreview.py --years 2020-2025          # the real pull
+```
+
+The pairs are style-matched by construction — both sides are reviews of the
+same paper, in the same genre, from the same cycle — which is the defence
+against learning provenance cues instead of judgement. The nearest prior work,
+[RbtAct](https://arxiv.org/abs/2603.09723), builds same-paper review pairs
+arbitrated by the *author*; here the arbiter is the *institution*.
+
 ## Roadmap
 
 - [x] **Phase 0 — Baseline.** Minimal DPO trainer + vanilla DPO on
