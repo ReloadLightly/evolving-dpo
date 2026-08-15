@@ -5,6 +5,13 @@ venv/
 .pytest_cache/
 results/
 outputs/
+
+# Fetched OpenReview text is never committed. Per HANDOFF section 8 we release
+# pair identifiers and construction code, not a bulk redistribution of review
+# text, so the CC BY 4.0 licence chain stays intact. Counts and cards are fine.
+data/raw/
+data/pairs.jsonl
+data/*.jsonl
 *.sqlite
 *.db
 .ipynb_checkpoints/

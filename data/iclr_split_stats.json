@@ -1,0 +1,42 @@
+{
+ "source": "github.com/papercopilot/paperlists",
+ "measured": "2026-08-14",
+ "note": "ICLR 2025/2026 excluded: git-lfs blocked in sandbox",
+ "years": [
+  {
+   "year": 2020,
+   "papers": 2594,
+   "with_ratings": 2561,
+   "spread_ge_3": 1225,
+   "spread_ge_4": 603
+  },
+  {
+   "year": 2021,
+   "papers": 3014,
+   "with_ratings": 2979,
+   "spread_ge_3": 1001,
+   "spread_ge_4": 379
+  },
+  {
+   "year": 2022,
+   "papers": 3422,
+   "with_ratings": 3375,
+   "spread_ge_3": 1572,
+   "spread_ge_4": 512
+  },
+  {
+   "year": 2023,
+   "papers": 4955,
+   "with_ratings": 4919,
+   "spread_ge_3": 2314,
+   "spread_ge_4": 818
+  },
+  {
+   "year": 2024,
+   "papers": 7407,
+   "with_ratings": 7261,
+   "spread_ge_3": 3474,
+   "spread_ge_4": 1159
+  }
+ ]
+}

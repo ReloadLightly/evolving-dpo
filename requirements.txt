@@ -6,6 +6,10 @@ datasets>=2.20
 peft>=0.11
 accelerate>=0.30
 
+# Data (peer-review preference pairs; see HANDOFF.md). Only needed to run
+# scripts/fetch_openreview.py — parsing a cache and the tests work without it.
+openreview-py>=2.4.2
+
 # Dev
 pytest>=8.0
 
