@@ -3,7 +3,8 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
-results/
+results/*
+!results/power.md
 outputs/
 
 # Fetched OpenReview text is never committed. Per HANDOFF section 8 we release
