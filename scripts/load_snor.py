@@ -234,6 +234,9 @@ def main() -> int:
     print(f"reading {comments_path.name} (this is the 1.3 GB one) …")
     n_comments = n_reviews = n_attached = n_orphan = n_no_text = 0
     content_keys: collections.Counter = collections.Counter()
+    orphan_by_conf: collections.Counter = collections.Counter()
+    rated_by_year: dict[int, collections.Counter] = collections.defaultdict(
+        collections.Counter)
     for comment in stream_jsonl(comments_path):
         n_comments += 1
         if not comment.get("is_review"):
@@ -243,6 +246,7 @@ def main() -> int:
         rec = records.get(paper_id)
         if rec is None:
             n_orphan += 1
+            orphan_by_conf[str(comment.get("conference_id") or "unknown")] += 1
             continue
         review = review_from_comment(comment)
         if review is None:
@@ -250,6 +254,8 @@ def main() -> int:
             continue
         content_keys[tuple(sorted(review["text_fields"]))] += 1
         rec["reviews"].append(review)
+        rated_by_year[rec["year"]][
+            "rated" if review["rating"] is not None else "unrated"] += 1
         n_attached += 1
 
     print(f"  {n_comments:,} comments, {n_reviews:,} flagged is_review, "
@@ -303,9 +309,44 @@ def main() -> int:
     for keys, count in content_keys.most_common(10):
         print(f"  {count:>7,}  {', '.join(keys) if keys else '(none)'}")
 
+    # Orphans are not one thing, and the difference decides whether to act.
+    # A review of a venue we did not ask for is expected: NeurIPS is excluded
+    # by design because it publishes reviews only for accepted papers. A review
+    # of an ICLR year we DID load means its paper is missing from both files,
+    # which is real text being lost.
     if n_orphan:
-        print(f"\n! {n_orphan:,} reviews belong to papers not loaded — that is review "
-              f"text being dropped. Pass --include-failed and widen --years.")
+        expected, unexpected = [], []
+        for conf, count in orphan_by_conf.most_common():
+            name, year = split_conf_id(conf)
+            if name not in wanted:
+                expected.append((conf, count, f"{name or '?'} not requested"))
+            elif year is not None and year not in years:
+                expected.append((conf, count, f"{year} outside --years"))
+            else:
+                unexpected.append((conf, count))
+        print(f"\nOrphaned reviews ({n_orphan:,}) — their paper was not loaded:")
+        for conf, count, why in expected[:12]:
+            print(f"  {count:>7,}  {conf:<12} expected: {why}")
+        for conf, count in unexpected[:12]:
+            print(f"  {count:>7,}  {conf:<12} ** paper missing from BOTH files **")
+        if not unexpected:
+            print("  All orphans fall outside the requested conferences and years, "
+                  "so no requested review text was lost.")
+        else:
+            print("  The starred rows are real losses. Widen --years, or the paper "
+                  "is absent from this SNOR dump entirely.", file=sys.stderr)
+
+    # An attached review with no rating cannot form a pair, and shows up
+    # downstream as build_pairs' `too_few_rated_reviews`. Surface it here,
+    # where the cause is visible, rather than only as an exclusion count.
+    print("\nRating coverage of attached reviews (unrated reviews cannot form pairs):")
+    for year in sorted(rated_by_year):
+        c = rated_by_year[year]
+        total = c["rated"] + c["unrated"]
+        pct = 100.0 * c["rated"] / max(1, total)
+        flag = "   <-- low" if pct < 80 else ""
+        print(f"  {year}: {c['rated']:>7,} rated of {total:>7,} attached "
+              f"({pct:5.1f}%){flag}")
 
     report = {
         "source": "SNOR v1, DOI 10.5281/zenodo.15866613, CC BY 4.0",
@@ -316,6 +357,11 @@ def main() -> int:
         "reviews_flagged": n_reviews,
         "reviews_attached": n_attached,
         "reviews_orphaned": n_orphan,
+        "orphans_by_conference": dict(orphan_by_conf.most_common()),
+        "rating_coverage_by_year": {
+            str(y): {"rated": c["rated"], "unrated": c["unrated"]}
+            for y, c in sorted(rated_by_year.items())
+        },
         "reviews_without_text": n_no_text,
         "primary_area_available": False,
         "selection_effect": bias_rows,
