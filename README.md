@@ -14,9 +14,10 @@ the venue's own record rather than from an author or an LLM judge. Across ICLR
 2,202 for testing after the mandatory 50/50 balancing — studied at 0.6B scale.
 
 **Status, 2026-08-20. No model has been trained. No dataset has been built. No review
-text has ever been fetched.** This repository contains the construction pipeline with
-97 offline tests, a timestamped preregistration, a power analysis, and a yield
-projection computed from real ICLR ratings with placeholder text. Every number below
+text has ever been fetched.** This repository contains the construction pipeline, the
+data layer and the surface baseline with 135 offline tests, a timestamped
+preregistration, a power analysis, and a yield projection computed from real
+ICLR ratings with placeholder text. Every number below
 carries a label saying which of those it is; none is an experimental result.
 
 **Clone note.** This work lives on branch `claude/openreview-fetch-reviews-j3jee5`.
@@ -216,14 +217,15 @@ built and frozen in git, 4.97 pp is the power of a design that cannot yet be run
 
 ## Running the pipeline
 
-Prerequisites: Python 3.11. The data pipeline and all 97 offline tests need only
-`pytest` — no torch, no network. `requirements.txt` additionally pins torch and friends,
-which are needed for training only.
+Prerequisites: Python 3.11. The data pipeline, the splits and the surface baseline
+need only `pytest` and `numpy` — no torch, no network. `requirements.txt` additionally
+pins torch and friends, which are needed for training only.
 
 ```bash
-pip install pytest
+pip install pytest numpy
 pytest tests/test_fetch_openreview.py tests/test_build_pairs.py \
-       tests/test_load_snor.py tests/test_power_analysis.py -q   # 97 tests, ~0.1s
+       tests/test_load_snor.py tests/test_power_analysis.py \
+       tests/test_review_pairs.py tests/test_surface_baseline.py -q   # 135 tests
 ```
 
 **Route A — from SNOR (recommended).** SNOR v1 is a normalized OpenReview dump
@@ -277,21 +279,21 @@ every projection in this repository with a measurement.
 | `scripts/validate_on_paperlists.py` | validates the construction logic on real ratings without review text |
 | `scripts/power_analysis.py` | minimum detectable effects → `results/power.md` |
 | `scripts/inspect_snor.py`, `probe_openreview.py` | schema reconnaissance before a long download |
-| `src/evolving_dpo/` | inherited LoRA DPO trainer, five losses, evaluation with drift and displacement diagnostics |
+| `src/evolving_dpo/review_pairs.py` | splits (temporal, topic), 50/50 balancing, the three arms' data, area induction, trivial baselines |
+| `src/evolving_dpo/surface_baseline.py` | the surface-feature classifier that arbitrates H2, numpy only |
+| `src/evolving_dpo/` (rest) | inherited LoRA DPO trainer, five losses, evaluation with drift and displacement diagnostics |
 | `HANDOFF.md`, `preregistration-v0.1.md` | the plan and the timestamped hypotheses |
 
 ## What is missing, and what is broken
 
 Stated plainly, because HANDOFF §12.1 makes the code — not the results — the deliverable.
 
-**Missing entirely.** Three of five preregistered arms have no implementation: `sft`,
-`dpo-shuffled`, and `surface` (the logistic-regression baseline that arbitrates H2, which
-the preregistration calls "not optional"). There is no loader connecting
-`data/pairs.jsonl` to the trainer — `src/evolving_dpo/data.py` knows only UltraFeedback
-and synthetic pairs. No 50/50 balancing code exists, though `results/power.md` assumes
-it. `scripts/run_all.py`, `scripts/analyze.py`, `paper/skeleton.md` and `paper/figures/`
-are all required by HANDOFF §12.1 and absent. The H3 interaction model is sized but not
-fitted.
+**Still missing.** `scripts/run_all.py` (one command, all arms, 5 seeds),
+`scripts/analyze.py` (tables and the three figures), and `paper/`. The H3 interaction
+model is sized by `power_analysis.py` but not fitted. The `dpo` and `sft` arms need a
+training entry point that consumes `review_pairs.to_preference_examples` /
+`to_sft_examples` — the data side of both exists and is tested; the training side does
+not.
 
 **Broken in the inherited trainer**, verified by reading the code:
 
